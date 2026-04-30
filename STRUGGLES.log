@@ -1,0 +1,9 @@
+# STRUGGLES.log
+
+Open questions and confusions while working through the curriculum.
+Format: numbered entry, module reference, the question, then `[OPEN]` /
+`[ANSWERED]` status. Claude resolves `[OPEN]` entries during code review.
+
+---
+
+(empty — add entries as you hit them)

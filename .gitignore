@@ -1,0 +1,17 @@
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code local state
+.claude/
+
+# PHP
+vendor/
+composer.lock
+*.cache

@@ -1,0 +1,13 @@
+{
+  "name": "raihank43/oop-09-capstone",
+  "description": "Module 9 capstone — order/cart domain pulling every OOP concept together",
+  "type": "project",
+  "require": {
+    "php": "^8.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "app/"
+    }
+  }
+}
