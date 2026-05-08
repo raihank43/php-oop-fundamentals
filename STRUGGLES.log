@@ -6,4 +6,119 @@ Format: numbered entry, module reference, the question, then `[OPEN]` /
 
 ---
 
-(empty — add entries as you hit them)
+#01-classes:
+
+#01-1 — What does `self` do? I thought it refers to the instance. [ANSWERED]
+
+  Important correction: `self` does NOT refer to the instance.
+
+  - `$this` → the instance. The thing you read/write properties on
+    (`$this->title`).
+  - `self::` → the **class itself**, captured at compile time (where the
+    keyword was written). It's a *static* reference, used with `::` not
+    `->`. You use it for class constants (`self::MAX`), static
+    properties (`self::$count`), and calling sibling static methods.
+  - `static::` → also a class reference, but resolves to the **runtime
+    class** (the one that actually called the method, even if it's a
+    subclass). This is "late static binding" — module 07 covers it in
+    detail.
+
+  Quick mental model: `$this` is the *object*, `self`/`static` is the
+  *class*. They live in different worlds and use different operators.
+
+  TS analogue: `this` ↔ `$this`. There's no clean TS equivalent of
+  `self::`/`static::` — you'd have to write `(this.constructor as
+  typeof Foo).bar`, which is ugly. PHP just gives you keywords.
+
+#01-2 — Coming from functional JS, I barely used classes — public /
+readonly / private feel new. [ANSWERED]
+
+  Three quick rules of thumb:
+
+  - `public readonly` → for **immutable** values you want callers to
+    read directly. Value objects (Money, Email, BlogPost.title). It's
+    the "frozen field" pattern.
+  - `public` (no readonly) → only when you genuinely don't care if
+    callers mutate it. Rare in good PHP code. Default away from this.
+  - `private` → mutable internal state nobody outside should touch
+    (counters, caches, the items array inside a Cart). Pair with
+    public methods that mutate it safely.
+  - `private readonly` → set once, never changes, only the class itself
+    needs to read it (e.g. an internal timestamp). Great for things
+    like `$createdAt`.
+  - `protected` → only matters once subclasses come in (module 03). If
+    you're not extending the class, prefer `private`.
+
+  Mental shortcut: **default to `private`. Loosen only when you have a
+  reason.** That's the opposite of how JS classes feel, where everything
+  is public unless you explicitly add `#`.
+
+#01-3 — `private readonly` + constructor body assignment: original
+attempt errored, so I switched to declare-at-class-level + assign in
+body. Why did the promoted version error? [ANSWERED]
+
+  Your fix is correct and idiomatic — keep it.
+
+  Why the original errored: when you write
+  `private readonly int $createdAt` as a *promoted* parameter, PHP does
+  the assignment for you the moment the constructor argument is bound
+  to the property (before the body runs). At that point the readonly
+  slot is already filled. Your `$this->createdAt = time();` in the body
+  is a *second* write to a readonly property, which throws.
+
+  Two valid shapes:
+
+  ```php
+  // (a) declare + assign in body — your current shape, good when the
+  // value is computed (time(), uuid, etc.):
+  private readonly int $createdAt;
+  public function __construct(...) {
+      $this->createdAt = time();
+  }
+
+  // (b) promoted param with caller-supplied value — when the value
+  // comes from outside:
+  public function __construct(
+      private readonly int $createdAt,
+  ) {}
+  ```
+
+  Rule: readonly = exactly one write. Promoted params count as that
+  one write. If you also need the body to set it, *don't promote*.
+
+  FOLLOW UP — why does `echo $BlogPost . PHP_EOL;` produce the same
+  output as `echo $BlogPost->__toString(), PHP_EOL;` even though
+  `__toString()` is never called explicitly? [ANSWERED]
+
+  Because `__toString()` is a **magic method**. PHP calls it
+  automatically whenever an object is used in a *string context* —
+  string concatenation (`.`), double-quoted interpolation (`"...
+  {$obj}"`), `(string) $obj` casts, `echo`, `print`, `sprintf("%s",
+  $obj)`, and so on.
+
+  In `echo $BlogPost . PHP_EOL;`:
+  1. The `.` operator demands a string on each side.
+  2. PHP sees `$BlogPost` is an object, looks up `__toString()`, calls
+     it, gets back the string.
+  3. Concatenates with `PHP_EOL`, hands the result to `echo`.
+
+  So the explicit call and the implicit call go through the exact same
+  method. Same input, same output.
+
+  Magic methods you'll meet in PHP — they all start with `__`:
+  `__construct`, `__toString`, `__get`/`__set` (property accessors,
+  Laravel uses these heavily), `__call` (method intercept), `__invoke`
+  (makes an object callable like a function), `__destruct`. They're
+  "hooks" the language calls automatically at specific moments.
+
+  JS analogue: `Symbol.toPrimitive` / `toString()` / `valueOf()`. When
+  you do `` `${obj}` `` or `String(obj)` or `"x" + obj`, V8 looks up
+  those hooks. PHP's magic methods work the same way — different names,
+  same idea.
+
+  Tiny stylistic note: `echo $a, $b;` (comma) and `echo $a . $b;`
+  (concat) both work, but they differ slightly: comma passes two args
+  to `echo` (no concat allocation), concat builds one string first.
+  Output is identical; `echo` is one of the few language constructs
+  that accepts a comma-separated list. Don't lose sleep over which to
+  pick — `echo $obj . PHP_EOL;` is the most common.
