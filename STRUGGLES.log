@@ -122,3 +122,132 @@ body. Why did the promoted version error? [ANSWERED]
   Output is identical; `echo` is one of the few language constructs
   that accepts a comma-separated list. Don't lose sleep over which to
   pick — `echo $obj . PHP_EOL;` is the most common.
+
+
+#02-visibility:
+
+#02-1 — `catch (\Error $e)` doesn't fire — the script crashes anyway. Why? [ANSWERED]
+
+  PHP has **two separate throwable hierarchies**, both implementing
+  `\Throwable`:
+
+  ```
+  \Throwable           (interface — everything below implements this)
+   ├── \Error          (engine/runtime errors)
+   │    ├── \TypeError
+   │    ├── \ValueError
+   │    └── (the readonly violation from module 01 — this one)
+   └── \Exception      (application-level "exceptional" cases)
+        ├── \LogicException
+        │    └── \InvalidArgumentException   ← what assertPositive throws
+        └── \RuntimeException
+  ```
+
+  Module 01 worked because writing to a readonly property throws
+  `\Error`. Here, your `assertPositive` does `throw new
+  \InvalidArgumentException(...)` — that's an `\Exception`, **not** an
+  `\Error`. The two are siblings, not parent/child. So
+  `catch (\Error $e)` doesn't match, the exception propagates up, the
+  script dies with the "Uncaught" fatal you saw.
+
+  Fixes:
+
+  - `catch (\Exception $e)` — catches everything in the Exception tree
+    (including InvalidArgumentException).
+  - `catch (\InvalidArgumentException $e)` — narrowest, catches exactly
+    what you threw. **Preferred in real code** — narrow catches make
+    intent clear and avoid swallowing unrelated bugs.
+  - `catch (\Throwable $e)` — catches both trees. Use sparingly,
+    usually only at the very top of an app for last-ditch logging.
+
+  Rule of thumb: `\Error` = "the engine is mad at me." `\Exception` =
+  "my domain logic said no." Catch the narrowest type you can.
+
+#02-2 — "Promote the parent's balance" option: does that mean changing
+`private float $balance` to `protected float $balance` so the child can
+read it as `$this->balance`? [ANSWERED]
+
+  Yes, exactly. `protected` = "this class and any subclass can see it."
+  Under that option, `SavingsAccount::applyInterest()` could do:
+
+  ```php
+  $this->balance *= (1 + $this->interestRate);
+  ```
+
+  …and it would work. The child reaches into the parent's state
+  directly.
+
+  Why option 2 (the helper) is the better default: with `protected`,
+  the child has *unrestricted* access — it can set the balance to
+  anything, including negative values, bypassing every invariant the
+  parent set up. With a `protected function setBalance(...)`, the
+  parent stays in charge of the rules; the child only requests a
+  change. This is **encapsulation via methods, not properties** — it's
+  the same instinct as React's "lift state up + pass setters down"
+  pattern.
+
+  Concretely: if next week you add "balance can never exceed
+  $1,000,000" as a rule, option 1 forces you to add that check in
+  every subclass that touches `$this->balance`. Option 2 forces you to
+  add it in one place — the helper.
+
+#02-3 — Is `setBalance(...)` in the parent + calling it from the child
+the right way to do this? [ANSWERED]
+
+  The *pattern* (protected mutator in parent, called from child) is
+  correct and idiomatic. But the **implementation** of your setBalance
+  has issues — see the chat review for specifics. The current code
+  takes the rate and multiplies the balance by it, which destroys the
+  balance instead of growing it.
+
+  A cleaner shape: keep `setBalance` truly a setter (assigns a new
+  value, validates it), and let `applyInterest` do the math:
+
+  ```php
+  // parent
+  protected function setBalance(float $newBalance): void {
+      if ($newBalance < 0) {
+          throw new \InvalidArgumentException("Balance can't go negative.");
+      }
+      $this->balance = $newBalance;
+  }
+
+  // child
+  public function applyInterest(): void {
+      $this->setBalance($this->balance * (1 + $this->interestRate));
+  }
+  ```
+
+  Now `setBalance` does one thing (set), `applyInterest` does one
+  thing (compute next balance), and each is testable in isolation.
+  Same SRP principle React hooks push you toward.
+  
+  FOLLOW UP — tried `$this->balance` in the child, got "undefined
+  property balance" (warning). Only promoting balance to `protected`
+  let the child read it. Why? [ANSWERED]
+
+  Because `private` means **"this class only"** — it hides from
+  subclasses too. When `SavingsAccount` writes `$this->balance`, PHP
+  looks for a property accessible from `SavingsAccount`'s scope.
+  There isn't one — the parent has it, but it's `private`, so the
+  child can't see it. PHP silently treats it as undefined: emits a
+  warning, returns `null`, keeps going. `null * 1.02 = 0`, so the
+  balance got wiped each time.
+
+  Two valid ways out:
+
+  - **Promote `$balance` to `protected`** (option 1 from the README).
+    Works because `protected` = "this class + subclasses." But now any
+    future subclass can stomp the balance directly, bypassing every
+    invariant.
+  - **Call the public getter** (`$this->balance()`). The public method
+    is accessible from anywhere — including the child. Read through
+    the getter, write through the setter, parent stays in full
+    control of every change. This is the option you ended up with,
+    and it's the right call.
+
+  The asymmetry worth remembering: PHP is **strict about writes**
+  (writing to a `readonly` or undefined-typed property → fatal
+  `\Error`), **lenient about reads** (reading an undefined property →
+  just a warning + `null`). Same engine, different policies depending
+  on direction.
