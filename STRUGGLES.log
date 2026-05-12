@@ -251,3 +251,109 @@ the right way to do this? [ANSWERED]
   `\Error`), **lenient about reads** (reading an undefined property →
   just a warning + `null`). Same engine, different policies depending
   on direction.
+
+
+#03-inheritance:
+
+#03-1 — What does `static::class` do? I just called it inside a
+variable and returned it. [ANSWERED]
+
+  `static::class` is the **runtime class name** — the class that was
+  actually instantiated, even when the method is defined in a parent.
+
+  In your code, `describe()` lives only in `Notification`. But when
+  you call it on an `UrgentNotification` instance, `static::class`
+  resolves to `"UrgentNotification"` — *the subclass*, not
+  `"Notification"`. You can see this in your output:
+
+  ```
+  <Notification>:           ← from $notification
+  <UrgentNotifiaction>:     ← from $urgentNotification (typo aside)
+  <SmsNotification>:        ← from $smsNotification
+  <FinalEmailNotification>: ← from $finalEmailNotification
+  ```
+
+  Four different strings, one shared method. That's the payoff.
+
+  Contrast with `self::class`:
+  - `self::class` = always the class where the keyword is *written*
+    (here: `"Notification"`). Resolved at compile time.
+  - `static::class` = the class that actually called the method.
+    Resolved at runtime. This is "late static binding" (module 07).
+
+  Why it matters: this is how Laravel's `Model::find($id)` returns a
+  `User` when you call `User::find(1)` and a `Post` when you call
+  `Post::find(1)`. The `find()` method lives in the base `Model`
+  class, but `static::` (and `new static()`) make it know which
+  subclass you actually invoked. You're meeting the feature now;
+  module 07 explores the factory-method angle.
+
+  TS analogue: there isn't a clean one. The ugly version is
+  `(this.constructor as typeof Foo).name`. PHP just gives you a
+  keyword.
+
+#03-2 — Tried `public function __construct(private string $sender) {
+parent::__construct($sender); }`, but then I couldn't figure out how
+to handle the `$message` param. Adding `parent::__construct($sender,
+$this->message)` errored. So I added a `protected string $message` in
+the child too. Right approach? [ANSWERED — but the current code has
+the wrong shape, see chat review]
+
+  Wrong instinct, common one. Two corrections layered together:
+
+  1. **Why `$this->message` errored.** When the parent constructor
+     hasn't run yet, `$this->message` is uninitialized — reading a
+     typed uninitialized property throws an `\Error`. The parent
+     constructor is what *assigns* `$this->message`, so you can't
+     read it *before* calling parent.
+
+  2. **Why redeclaring `$message` in the child isn't the fix.** The
+     parent already has `protected string $message`. Adding
+     `protected string $message` to the child constructor (via
+     promotion) creates a second property with the same name — PHP
+     allows it, but it's redundant and confusing. The parent's slot
+     is the one that should hold the message.
+
+  The real shape: the child's constructor should accept *all the
+  parent's args* (`$recipient`, `$message`) **plus** the new ones the
+  child needs (`$sender`). Pass the parent's share to
+  `parent::__construct`, keep the rest as the child's own:
+
+  ```php
+  class SmsNotification extends Notification
+  {
+      public function __construct(
+          string $recipient,
+          string $message,
+          private string $sender,
+      ) {
+          parent::__construct($recipient, $message);
+      }
+  }
+  ```
+
+  Notice `$recipient` and `$message` have **no visibility keyword** —
+  they're plain parameters, consumed and forwarded, *not* promoted to
+  child properties. The parent owns them. The child only promotes
+  `$sender` because that's the new state it's responsible for.
+
+  General rule for overriding constructors: **child accepts a
+  superset of parent's params, forwards parent's share, promotes only
+  the new ones.**
+
+#03-3 — Attempted `class x extends FinalEmailNotification {}` and got
+"Cannot extend final class" fatal at parse time. [ANSWERED]
+
+  Exactly the behavior you wanted to confirm. `final class` means
+  "the inheritance chain stops here." The fatal happens at *parse
+  time* (when PHP loads the file), not at runtime — there's no way
+  to wrap it in `try/catch` from inside the same file, because the
+  file fails to even load. That's why you correctly left the
+  forbidden extension commented out in `run.php`.
+
+  Worth knowing for module 09 (Capstone) and real Laravel work:
+  `final` on a class is the modern PHP default for value objects and
+  infrastructure. The Symfony / Laravel ecosystem leans heavily on
+  it now — it makes refactors safer because no one can silently
+  build on a class you don't intend to be extensible.
+
