@@ -357,3 +357,138 @@ the wrong shape, see chat review]
   it now — it makes refactors safer because no one can silently
   build on a class you don't intend to be extensible.
 
+
+#04-abstract:
+
+#04-1 — Used `sprintf` and `%s` from the materials but not sure how
+they work. [ANSWERED]
+
+  `sprintf` = "string printf." Same idea as `printf` but it **returns**
+  the formatted string instead of echoing it. Templating without
+  concatenation.
+
+  - `%s` is a placeholder for "insert a string here." `sprintf` walks
+    the format string left to right, replacing each `%s` with the next
+    argument (after the format string itself).
+  - Other common placeholders: `%d` (integer), `%f` (float), `%.2f`
+    (float with 2 decimals — actually handy for money), `%05d`
+    (int padded to 5 digits with zeros).
+
+  Your call:
+
+  ```php
+  sprintf(
+      'Charged %s via %s',
+      number_format($this->amountCents / 100, 2),   // → first %s
+      static::class,                                 // → second %s
+  )
+  ```
+
+  is equivalent to:
+
+  ```php
+  'Charged ' . number_format(...) . ' via ' . static::class
+  ```
+
+  Both produce the same string. `sprintf` reads better when you have
+  more than two pieces to glue together, or when the format pattern is
+  worth seeing at a glance (e.g. money formatting, log lines). For
+  two-piece concat with `.`, `.` is fine. Pick whichever reads clearer
+  in the moment.
+
+  JS analogue: there's no built-in `sprintf` in vanilla JS. Template
+  literals (`` `Charged ${x} via ${y}` ``) replaced the need. PHP added
+  string interpolation too (`"Charged {$x} via {$y}"`), so you'll see
+  both styles in real codebases.
+
+#04-2 — Every subclass that extends the abstract class warns "does
+not implement method 'charge'" if I leave `charge()` out. So abstract
+methods are required for every subclass — right? [ANSWERED]
+
+  Right. That's the whole point of `abstract`. The keyword on a method
+  is a compile-time contract: **any non-abstract class that descends
+  from this one MUST implement this method.** No exceptions, no
+  defaults.
+
+  - If you forget to implement it, the IDE warns first, then PHP
+    fatals at *parse time* the moment it loads the file. Same level
+    of strictness as the `final class` rule from module 03 — the
+    engine refuses to load broken inheritance.
+  - If you want to allow a subclass to skip implementing it, you have
+    to make the subclass itself `abstract` (turtles all the way down).
+    Eventually some concrete subclass has to do the work.
+
+  Why this is useful: it lets the parent rely on the method existing
+  without knowing how it works. Your `PaymentMethod::receipt()`
+  doesn't call `charge()`, but if it did — `return $this->charge() .
+  ' ' . static::class;` — it could trust that *every* concrete
+  subclass has implemented `charge()`. The parent gets to call
+  forward into code that doesn't exist yet, because the contract
+  guarantees it will exist by the time the parent is actually used.
+
+  This is the "template method" pattern. Laravel's `Notification`
+  class works this way: it has abstract `via()` (which channels?) and
+  abstract `toMail()`, and the base class orchestrates them.
+
+#04-3 — `processAll` bonus: I don't understand "type-hint the
+parameter against the abstract class," and I'm not sure how to iterate
+a list of `PaymentMethod` since I can't instantiate the abstract
+class. [ANSWERED]
+
+  Two separate things tangled together. Let's untangle:
+
+  1. **You can't instantiate `PaymentMethod`** — true, that's what
+     abstract means. But you *can* instantiate `CreditCardPayment`
+     and `PayPalPayment`, which are concrete subclasses. They **are**
+     `PaymentMethod`s (because they extend it). So a list of them is
+     still "a list of PaymentMethod objects" from the type system's
+     perspective.
+
+  2. **"Type-hint against the abstract class"** — PHP type-checks at
+     the *type* level, not the *concrete class* level. A parameter
+     typed `PaymentMethod` accepts any subclass:
+
+     ```php
+     function chargeOne(PaymentMethod $payment): void {
+         echo $payment->charge(), PHP_EOL;
+     }
+     chargeOne($ccPayment);   // works — CreditCardPayment IS-A PaymentMethod
+     chargeOne($ppPayment);   // works — PayPalPayment IS-A PaymentMethod
+     ```
+
+  For "list of payments," PHP has two idiomatic shapes:
+
+  **Variadic** — clean, type-checked per element:
+
+  ```php
+  function processAll(PaymentMethod ...$payments): void {
+      foreach ($payments as $payment) {
+          echo $payment->charge(), PHP_EOL;
+      }
+  }
+  processAll($ccPayment, $ppPayment);
+  ```
+
+  `PaymentMethod ...$payments` means "zero or more PaymentMethod
+  arguments, collected into an array called `$payments`." Each call
+  site is type-checked individually.
+
+  **Array with docblock** — what you'd see in older code:
+
+  ```php
+  /** @param PaymentMethod[] $payments */
+  function processAll(array $payments): void {
+      foreach ($payments as $payment) {
+          echo $payment->charge(), PHP_EOL;
+      }
+  }
+  processAll([$ccPayment, $ppPayment]);
+  ```
+
+  The `array` type-hint here is *not* element-typed at runtime — PHP
+  doesn't have generics. The docblock is the only thing telling tools
+  (PHPStan, IDEs) what's inside. Pick variadic when you can; it's
+  enforced.
+
+  TS analogue: variadic = `(...payments: PaymentMethod[]) => void`.
+  Same shape.

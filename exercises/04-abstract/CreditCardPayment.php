@@ -1,6 +1,21 @@
 <?php
+
 declare(strict_types=1);
 
 require_once __DIR__ . '/PaymentMethod.php';
 
-// TODO: CreditCardPayment per exercises/04-abstract/README.md
+class CreditCardPayment extends PaymentMethod
+{
+
+    public function __construct(int $amountCents, private string $last4)
+    {
+        return parent::__construct($amountCents);
+    }
+
+
+    public function charge(): string
+    {
+        $amount = $this->format();
+        return "Charged {$amount} to card ending {$this->last4}";
+    }
+}
