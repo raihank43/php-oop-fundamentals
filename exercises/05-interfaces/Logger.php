@@ -1,4 +1,9 @@
 <?php
+
 declare(strict_types=1);
 
-// TODO: Logger interface per exercises/05-interfaces/README.md
+interface Logger
+{
+    public function info(string $message): void;
+    public function error(string $message): void;
+}

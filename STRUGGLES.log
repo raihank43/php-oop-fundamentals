@@ -492,3 +492,122 @@ class. [ANSWERED]
 
   TS analogue: variadic = `(...payments: PaymentMethod[]) => void`.
   Same shape.
+
+#05-interfaces:
+
+#05-1 — I get type contracts (used them in TS), but why do I have to
+restate the return type on the method when the interface already
+declares it? [ANSWERED]
+
+  Because in PHP the interface and the implementation are two
+  *separate* declarations. The interface says "a method named `info`
+  exists, takes a string, returns void." The class then writes its own
+  `info` with a body. PHP does **not** copy the signature down from the
+  interface — you write the full signature again, and PHP *checks* that
+  the two are compatible.
+
+  Leave the return type off and you don't get the interface's version
+  by default — you get a method whose return type is "unspecified,"
+  which is *not* compatible with the interface's explicit `: void`.
+  PHP fatals: "Declaration of FileLogger::info() must be compatible
+  with Logger::info(): void".
+
+  So it's not redundancy — it's PHP requiring the implementation to
+  *prove* it matches, in its own words. The compatibility rules are
+  the same covariance/contravariance ones from module 03:
+  - return type: same or *narrower* (covariant) is allowed
+  - parameter types: same or *wider* (contravariant) is allowed
+
+  TS feels different because TS will happily *infer* a compatible
+  signature and only complains when it's actually wrong. PHP wants it
+  spelled out. Net effect once you're writing it: identical to TS —
+  you restate the signature, just without the option to be lazy.
+
+#05-2 — What's the purpose of `$path` in FileLogger and how do I use
+it? [ANSWERED]
+
+  `$path` is *where* this particular logger writes. It's the one piece
+  of configuration a FileLogger needs that a StdoutLogger doesn't —
+  StdoutLogger always writes to the screen, but a FileLogger has to be
+  told which file.
+
+  The flow (which you implemented correctly):
+
+  ```php
+  public function __construct(private readonly string $path) {}
+  //                          ^ captured once at construction, frozen
+
+  public function info(string $message): void {
+      file_put_contents($this->path, ...);  // ^ used here
+  }
+  ```
+
+  The constructor stashes it as a property; every method reads
+  `$this->path`. This is exactly why two FileLoggers can write to
+  different files — each instance carries its own `$path`. That
+  per-instance config is the whole reason it's a *constructor
+  parameter* rather than a hardcoded constant.
+
+#05-3 — "Type-hint against the interface, not a concrete class" in
+OrderProcessor — what does that look like in code? [ANSWERED]
+
+  You already did it right:
+
+  ```php
+  public function __construct(private readonly Logger $logger) {}
+  //                                            ^^^^^^ the interface
+  ```
+
+  The significance: `OrderProcessor` declares "I need *a* Logger." It
+  does **not** say `StdoutLogger $logger` or `FileLogger $logger`. So
+  the caller decides which concrete logger to inject:
+
+  ```php
+  new OrderProcessor(new StdoutLogger());   // logs to screen
+  new OrderProcessor(new FileLogger($p));   // logs to file
+  ```
+
+  `OrderProcessor`'s code never changes. That's **dependency
+  injection** + **programming to an interface**. The payoff:
+  - swap implementations without touching the consumer
+  - in tests, inject a fake logger that records calls instead of
+    writing anywhere
+  - this is *exactly* how Laravel's container works — you type-hint an
+    interface in a constructor, the container resolves the bound
+    implementation and injects it. You're hand-wiring now what the
+    framework will automate later.
+
+  Contrast: if you'd written `private StdoutLogger $logger`,
+  OrderProcessor would be welded to one logger forever. The interface
+  is what keeps it swappable.
+
+#05-4 — Driver task #4 "print the contents of the log file at the
+end" — how? [ANSWERED]
+
+  Read the file back and echo it. The function is `file_get_contents`
+  (the read counterpart of `file_put_contents`):
+
+  ```php
+  echo file_get_contents($logPath);
+  ```
+
+  The catch: your `FileLogger` keeps `$path` *private*, so `run.php`
+  can't pull it off the object. Two clean options:
+
+  1. Keep the path in a variable in `run.php` and reuse it both for
+     constructing the logger *and* for reading back:
+
+     ```php
+     $logPath = sys_get_temp_dir() . '/orders.log';
+     $fileLogger = new FileLogger($logPath);
+     // ... use it ...
+     echo file_get_contents($logPath);
+     ```
+
+  2. (heavier) give FileLogger a `public function path(): string`
+     getter. Overkill for this exercise — option 1 is what you want.
+
+  Your `printf()` with no arguments crashed because `printf` *requires*
+  at least a format string. You wanted `file_get_contents`, not
+  `printf`. (`printf` formats-and-echoes; it's the echo-cousin of the
+  `sprintf` from module 04.)
